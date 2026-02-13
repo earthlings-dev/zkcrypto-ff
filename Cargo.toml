@@ -3,7 +3,7 @@ members = ["ff_derive"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.93.0"
+rust-version = "1.93"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/zkcrypto/ff"
 homepage = "https://github.com/zkcrypto/ff"
