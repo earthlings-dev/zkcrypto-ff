@@ -2,11 +2,8 @@
 //! `ff` crate are reflected in `ff_derive`. It also uses the resulting field to test some
 //! of the APIs provided by `ff`, such as batch inversion.
 
-#[macro_use]
-extern crate ff;
-
 /// The BLS12-381 scalar field.
-#[derive(PrimeField)]
+#[derive(ff::PrimeField)]
 #[PrimeFieldModulus = "52435875175126190479447740508185965837690552500527637822603658699938581184513"]
 #[PrimeFieldGenerator = "7"]
 #[PrimeFieldReprEndianness = "little"]
@@ -14,15 +11,29 @@ struct Bls381K12Scalar([u64; 4]);
 
 mod fermat {
     /// The largest known Fermat prime, used to test the case `t = 1`.
-    #[derive(PrimeField)]
+    #[derive(ff::PrimeField)]
     #[PrimeFieldModulus = "65537"]
     #[PrimeFieldGenerator = "3"]
     #[PrimeFieldReprEndianness = "little"]
     struct Fermat65537Field([u64; 1]);
+
+    #[test]
+    fn fermat_field_constants() {
+        use ff::{Field, PrimeField};
+
+        assert_eq!(
+            Fermat65537Field::from(2) * Fermat65537Field::TWO_INV,
+            Fermat65537Field::ONE,
+        );
+        assert_eq!(
+            Fermat65537Field::ROOT_OF_UNITY * Fermat65537Field::ROOT_OF_UNITY_INV,
+            Fermat65537Field::ONE,
+        );
+    }
 }
 
 mod full_limbs {
-    #[derive(PrimeField)]
+    #[derive(ff::PrimeField)]
     #[PrimeFieldModulus = "39402006196394479212279040100143613805079739270465446667948293404245721771496870329047266088258938001861606973112319"]
     #[PrimeFieldGenerator = "19"]
     #[PrimeFieldReprEndianness = "little"]
@@ -31,9 +42,8 @@ mod full_limbs {
     #[test]
     fn random_masking_does_not_overflow() {
         use ff::Field;
-        use rand::rngs::OsRng;
 
-        let _ = F384p::random(OsRng);
+        let _ = F384p::random(&mut rand::rng());
     }
 }
 
@@ -58,13 +68,13 @@ fn constants() {
 
     // ROOT_OF_UNITY^{2^s} mod m == 1
     assert_eq!(
-        Bls381K12Scalar::ROOT_OF_UNITY.pow(&[1u64 << Bls381K12Scalar::S, 0, 0, 0]),
+        Bls381K12Scalar::ROOT_OF_UNITY.pow([1u64 << Bls381K12Scalar::S, 0, 0, 0]),
         Bls381K12Scalar::ONE,
     );
 
     // DELTA^{t} mod m == 1
     assert_eq!(
-        Bls381K12Scalar::DELTA.pow(&[
+        Bls381K12Scalar::DELTA.pow([
             0xfffe5bfeffffffff,
             0x09a1d80553bda402,
             0x299d7d483339d808,
@@ -138,13 +148,15 @@ fn batch_inversion() {
 
 #[test]
 fn sqrt() {
-    use ff::{Field, PrimeField};
+    use ff::Field;
+
     // A field modulo a prime such that p = 1 mod 4 and p != 1 mod 16
-    #[derive(PrimeField)]
+    #[derive(ff::PrimeField)]
     #[PrimeFieldModulus = "357686312646216567629137"]
     #[PrimeFieldGenerator = "5"]
     #[PrimeFieldReprEndianness = "little"]
     struct Fp([u64; 2]);
+
     fn test(square_root: Fp) {
         let square = square_root.square();
         let square_root = square.sqrt().unwrap();
@@ -153,6 +165,5 @@ fn sqrt() {
 
     test(Fp::ZERO);
     test(Fp::ONE);
-    use rand::rngs::OsRng;
-    test(Fp::random(OsRng));
+    test(Fp::random(&mut rand::rng()));
 }

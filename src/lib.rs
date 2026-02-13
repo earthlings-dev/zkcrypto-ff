@@ -29,7 +29,7 @@ use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use rand_core::RngCore;
+use rand_core::Rng;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 /// Bit representation of a field element.
@@ -75,7 +75,7 @@ pub trait Field:
     const ONE: Self;
 
     /// Returns an element chosen uniformly at random using a user-provided RNG.
-    fn random(rng: impl RngCore) -> Self;
+    fn random(rng: impl Rng) -> Self;
 
     /// Returns true iff this element is zero.
     fn is_zero(&self) -> Choice {

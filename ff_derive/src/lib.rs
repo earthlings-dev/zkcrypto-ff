@@ -1,14 +1,12 @@
 #![recursion_limit = "1024"]
 
 extern crate proc_macro;
-extern crate proc_macro2;
 
 use num_bigint::BigUint;
 use num_integer::Integer;
 use num_traits::{One, ToPrimitive, Zero};
-use quote::quote;
 use quote::TokenStreamExt;
-use std::iter;
+use quote::quote;
 use std::str::FromStr;
 
 mod pow_fixed;
@@ -35,20 +33,19 @@ impl ReprEndianness {
         match self {
             ReprEndianness::Big => {
                 let buf = modulus.to_bytes_be();
-                iter::repeat(0)
-                    .take(bytes - buf.len())
-                    .chain(buf.into_iter())
+                std::iter::repeat_n(0, bytes - buf.len())
+                    .chain(buf)
                     .collect()
             }
             ReprEndianness::Little => {
                 let mut buf = modulus.to_bytes_le();
-                buf.extend(iter::repeat(0).take(bytes - buf.len()));
+                buf.extend(std::iter::repeat_n(0, bytes - buf.len()));
                 buf
             }
         }
     }
 
-    fn from_repr(&self, name: &syn::Ident, limbs: usize) -> proc_macro2::TokenStream {
+    fn read_repr(&self, name: &syn::Ident, limbs: usize) -> proc_macro2::TokenStream {
         let read_repr = match self {
             ReprEndianness::Big => quote! {
                 ::ff::derive::byteorder::BigEndian::read_u64_into(r.as_ref(), &mut inner[..]);
@@ -162,14 +159,14 @@ pub fn prime_field(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         proc_macro2::Span::call_site(),
     );
 
-    let mut gen = proc_macro2::TokenStream::new();
+    let mut tokens = proc_macro2::TokenStream::new();
 
     let (constants_impl, sqrt_impl) =
         prime_field_constants_and_sqrt(&ast.ident, &modulus, limbs, generator);
 
-    gen.extend(constants_impl);
-    gen.extend(prime_field_repr_impl(&repr_ident, &endianness, limbs * 8));
-    gen.extend(prime_field_impl(
+    tokens.extend(constants_impl);
+    tokens.extend(prime_field_repr_impl(&repr_ident, &endianness, limbs * 8));
+    tokens.extend(prime_field_impl(
         &ast.ident,
         &repr_ident,
         &modulus,
@@ -179,7 +176,7 @@ pub fn prime_field(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     ));
 
     // Return the generated impl
-    gen.into()
+    tokens.into()
 }
 
 /// Checks that `body` contains `pub [u64; limbs]`.
@@ -191,15 +188,15 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
             return Some(
                 syn::Error::new_spanned(ast, "PrimeField derive only works for structs.")
                     .to_compile_error(),
-            )
+            );
         }
     };
 
     // The struct should contain a single unnamed field.
-    let fields = match &variant_data.fields {
-        syn::Fields::Unnamed(x) if x.unnamed.len() == 1 => x,
-        _ => {
-            return Some(
+    let fields =
+        match &variant_data.fields {
+            syn::Fields::Unnamed(x) if x.unnamed.len() == 1 => x,
+            _ => return Some(
                 syn::Error::new_spanned(
                     &ast.ident,
                     format!(
@@ -208,9 +205,8 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
                     ),
                 )
                 .to_compile_error(),
-            )
-        }
-    };
+            ),
+        };
     let field = &fields.unnamed[0];
 
     // The field should be an array.
@@ -226,17 +222,13 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
                     ),
                 )
                 .to_compile_error(),
-            )
+            );
         }
     };
 
     // The array's element type should be `u64`.
     if match arr.elem.as_ref() {
-        syn::Type::Path(path) => path
-            .path
-            .get_ident()
-            .map(|x| x.to_string() != "u64")
-            .unwrap_or(true),
+        syn::Type::Path(path) => path.path.get_ident().map(|x| *x != "u64").unwrap_or(true),
         _ => true,
     } {
         return Some(
@@ -252,18 +244,14 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
     }
 
     // The array's length should be a literal int equal to `limbs`.
-    let expr_lit = match &arr.len {
-        syn::Expr::Lit(expr_lit) => Some(&expr_lit.lit),
-        syn::Expr::Group(expr_group) => match &*expr_group.expr {
-            syn::Expr::Lit(expr_lit) => Some(&expr_lit.lit),
+    let lit_int = match &arr.len {
+        syn::Expr::Lit(expr_lit) => match &expr_lit.lit {
+            syn::Lit::Int(lit_int) => Some(lit_int),
             _ => None,
         },
         _ => None,
     };
-    let lit_int = match match expr_lit {
-        Some(syn::Lit::Int(lit_int)) => Some(lit_int),
-        _ => None,
-    } {
+    let lit_int = match lit_int {
         Some(x) => x,
         _ => {
             return Some(
@@ -272,7 +260,7 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
                     format!("To derive PrimeField, change this to `[u64; {}]`.", limbs),
                 )
                 .to_compile_error(),
-            )
+            );
         }
     };
     if lit_int.base10_digits() != limbs.to_string() {
@@ -291,7 +279,7 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
         _ => {
             return Some(
                 syn::Error::new_spanned(&field.vis, "Field must not be public.").to_compile_error(),
-            )
+            );
         }
     }
 
@@ -302,22 +290,18 @@ fn validate_struct(ast: &syn::DeriveInput, limbs: usize) -> Option<proc_macro2::
 /// Fetch an attribute string from the derived struct.
 fn fetch_attr(name: &str, attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
-        if let Ok(meta) = attr.parse_meta() {
-            match meta {
-                syn::Meta::NameValue(nv) => {
-                    if nv.path.get_ident().map(|i| i.to_string()) == Some(name.to_string()) {
-                        match nv.lit {
-                            syn::Lit::Str(ref s) => return Some(s.value()),
-                            _ => {
-                                panic!("attribute {} should be a string", name);
-                            }
-                        }
-                    }
+        if attr.path().is_ident(name) {
+            let value: syn::LitStr = attr.parse_args().unwrap_or_else(|_| {
+                // Handle #[Name = "value"] style (MetaNameValue)
+                if let syn::Meta::NameValue(nv) = &attr.meta
+                    && let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(ref s) = expr_lit.lit
+                {
+                    return s.clone();
                 }
-                _ => {
-                    panic!("attribute {} should be a string", name);
-                }
-            }
+                panic!("attribute {} should be a string", name);
+            });
+            return Some(value.value());
         }
     }
 
@@ -483,7 +467,7 @@ fn prime_field_constants_and_sqrt(
 
     let two = BigUint::from_str("2").unwrap();
     let p_minus_2 = modulus - &two;
-    let invert = |v| exp(v, &p_minus_2, &modulus);
+    let invert = |v| exp(v, &p_minus_2, modulus);
 
     // 2^-1 mod m
     let two_inv = biguint_to_u64_vec(to_mont(invert(two)), limbs);
@@ -497,11 +481,11 @@ fn prime_field_constants_and_sqrt(
     }
 
     // Compute 2^s root of unity given the generator
-    let root_of_unity = exp(generator.clone(), &t, &modulus);
+    let root_of_unity = exp(generator.clone(), &t, modulus);
     let root_of_unity_inv = biguint_to_u64_vec(to_mont(invert(root_of_unity.clone())), limbs);
     let root_of_unity = biguint_to_u64_vec(to_mont(root_of_unity), limbs);
     let delta = biguint_to_u64_vec(
-        to_mont(exp(generator.clone(), &(BigUint::one() << s), &modulus)),
+        to_mont(exp(generator.clone(), &(BigUint::one() << s), modulus)),
         limbs,
     );
     let generator = biguint_to_u64_vec(to_mont(generator), limbs);
@@ -682,12 +666,12 @@ fn prime_field_impl(
 
     // Implement montgomery reduction for some number of limbs
     fn mont_impl(limbs: usize) -> proc_macro2::TokenStream {
-        let mut gen = proc_macro2::TokenStream::new();
+        let mut tokens = proc_macro2::TokenStream::new();
 
         for i in 0..limbs {
             {
                 let temp = get_temp(i);
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let k = #temp.wrapping_mul(INV);
                     let (_, carry) = ::ff::derive::mac(#temp, k, MODULUS_LIMBS.0[0], 0);
                 });
@@ -695,7 +679,7 @@ fn prime_field_impl(
 
             for j in 1..limbs {
                 let temp = get_temp(i + j);
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let (#temp, carry) = ::ff::derive::mac(#temp, k, MODULUS_LIMBS.0[#j], carry);
                 });
             }
@@ -703,11 +687,11 @@ fn prime_field_impl(
             let temp = get_temp(i + limbs);
 
             if i == 0 {
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let (#temp, carry2) = ::ff::derive::adc(#temp, 0, carry);
                 });
             } else {
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let (#temp, carry2) = ::ff::derive::adc(#temp, carry2, carry);
                 });
             }
@@ -716,31 +700,31 @@ fn prime_field_impl(
         for i in 0..limbs {
             let temp = get_temp(limbs + i);
 
-            gen.extend(quote! {
+            tokens.extend(quote! {
                 self.0[#i] = #temp;
             });
         }
 
-        gen
+        tokens
     }
 
     fn sqr_impl(a: proc_macro2::TokenStream, limbs: usize) -> proc_macro2::TokenStream {
-        let mut gen = proc_macro2::TokenStream::new();
+        let mut tokens = proc_macro2::TokenStream::new();
 
         if limbs > 1 {
             for i in 0..(limbs - 1) {
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let carry = 0;
                 });
 
                 for j in (i + 1)..limbs {
                     let temp = get_temp(i + j);
                     if i == 0 {
-                        gen.extend(quote! {
+                        tokens.extend(quote! {
                             let (#temp, carry) = ::ff::derive::mac(0, #a.0[#i], #a.0[#j], carry);
                         });
                     } else {
-                        gen.extend(quote! {
+                        tokens.extend(quote! {
                             let (#temp, carry) = ::ff::derive::mac(#temp, #a.0[#i], #a.0[#j], carry);
                         });
                     }
@@ -748,7 +732,7 @@ fn prime_field_impl(
 
                 let temp = get_temp(i + limbs);
 
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let #temp = carry;
                 });
             }
@@ -758,22 +742,22 @@ fn prime_field_impl(
                 let temp1 = get_temp(limbs * 2 - i - 1);
 
                 if i == 1 {
-                    gen.extend(quote! {
+                    tokens.extend(quote! {
                         let #temp0 = #temp1 >> 63;
                     });
                 } else if i == (limbs * 2 - 1) {
-                    gen.extend(quote! {
+                    tokens.extend(quote! {
                         let #temp0 = #temp0 << 1;
                     });
                 } else {
-                    gen.extend(quote! {
+                    tokens.extend(quote! {
                         let #temp0 = (#temp0 << 1) | (#temp1 >> 63);
                     });
                 }
             }
         } else {
             let temp1 = get_temp(1);
-            gen.extend(quote! {
+            tokens.extend(quote! {
                 let #temp1 = 0;
             });
         }
@@ -782,16 +766,16 @@ fn prime_field_impl(
             let temp0 = get_temp(i * 2);
             let temp1 = get_temp(i * 2 + 1);
             if i == 0 {
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let (#temp0, carry) = ::ff::derive::mac(0, #a.0[#i], #a.0[#i], 0);
                 });
             } else {
-                gen.extend(quote! {
+                tokens.extend(quote! {
                     let (#temp0, carry) = ::ff::derive::mac(#temp0, #a.0[#i], #a.0[#i], carry);
                 });
             }
 
-            gen.extend(quote! {
+            tokens.extend(quote! {
                 let (#temp1, carry) = ::ff::derive::adc(#temp1, 0, carry);
             });
         }
@@ -802,13 +786,13 @@ fn prime_field_impl(
             proc_macro2::Punct::new(',', proc_macro2::Spacing::Alone),
         );
 
-        gen.extend(quote! {
+        tokens.extend(quote! {
             let mut ret = *self;
             ret.mont_reduce(#mont_calling);
             ret
         });
 
-        gen
+        tokens
     }
 
     fn mul_impl(
@@ -816,10 +800,10 @@ fn prime_field_impl(
         b: proc_macro2::TokenStream,
         limbs: usize,
     ) -> proc_macro2::TokenStream {
-        let mut gen = proc_macro2::TokenStream::new();
+        let mut tokens = proc_macro2::TokenStream::new();
 
         for i in 0..limbs {
-            gen.extend(quote! {
+            tokens.extend(quote! {
                 let carry = 0;
             });
 
@@ -827,11 +811,11 @@ fn prime_field_impl(
                 let temp = get_temp(i + j);
 
                 if i == 0 {
-                    gen.extend(quote! {
+                    tokens.extend(quote! {
                         let (#temp, carry) = ::ff::derive::mac(0, #a.0[#i], #b.0[#j], carry);
                     });
                 } else {
-                    gen.extend(quote! {
+                    tokens.extend(quote! {
                         let (#temp, carry) = ::ff::derive::mac(#temp, #a.0[#i], #b.0[#j], carry);
                     });
                 }
@@ -839,7 +823,7 @@ fn prime_field_impl(
 
             let temp = get_temp(i + limbs);
 
-            gen.extend(quote! {
+            tokens.extend(quote! {
                 let #temp = carry;
             });
         }
@@ -850,11 +834,11 @@ fn prime_field_impl(
             proc_macro2::Punct::new(',', proc_macro2::Spacing::Alone),
         );
 
-        gen.extend(quote! {
+        tokens.extend(quote! {
             self.mont_reduce(#mont_calling);
         });
 
-        gen
+        tokens
     }
 
     /// Generates an implementation of multiplicative inversion within the target prime
@@ -907,7 +891,7 @@ fn prime_field_impl(
     let mont_reduce_self_params = mont_reduce_params(quote! {self}, limbs);
     let mont_reduce_other_params = mont_reduce_params(quote! {other}, limbs);
 
-    let from_repr_impl = endianness.from_repr(name, limbs);
+    let from_repr_impl = endianness.read_repr(name, limbs);
     let to_repr_impl = endianness.to_repr(quote! {#repr}, &mont_reduce_self_params, limbs);
 
     let prime_field_bits_impl = if cfg!(feature = "bits") {
@@ -1259,7 +1243,7 @@ fn prime_field_impl(
             const ONE: Self = R;
 
             /// Computes a uniformly random element using rejection sampling.
-            fn random(mut rng: impl ::ff::derive::rand_core::RngCore) -> Self {
+            fn random(mut rng: impl ::ff::derive::rand_core::Rng) -> Self {
                 loop {
                     let mut tmp = {
                         let mut repr = [0u64; #limbs];

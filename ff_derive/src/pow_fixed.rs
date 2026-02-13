@@ -1,6 +1,6 @@
 //! Fixed-exponent variable-base exponentiation using addition chains.
 
-use addchain::{build_addition_chain, Step};
+use addchain::{Step, build_addition_chain};
 use num_bigint::BigUint;
 use quote::quote;
 use syn::Ident;
@@ -16,11 +16,11 @@ pub(crate) fn generate(
 ) -> proc_macro2::TokenStream {
     let steps = build_addition_chain(exponent);
 
-    let mut gen = proc_macro2::TokenStream::new();
+    let mut tokens = proc_macro2::TokenStream::new();
 
     // First entry in chain is one, i.e. the base.
     let start = get_temp(0);
-    gen.extend(quote! {
+    tokens.extend(quote! {
         let #start = #base;
     });
 
@@ -28,7 +28,7 @@ pub(crate) fn generate(
     for (i, step) in steps.into_iter().enumerate() {
         let out = get_temp(i + 1);
 
-        gen.extend(match step {
+        tokens.extend(match step {
             Step::Double { index } => {
                 let val = &tmps[index];
                 quote! {
@@ -48,9 +48,9 @@ pub(crate) fn generate(
     }
 
     let end = tmps.last().expect("have last");
-    gen.extend(quote! {
+    tokens.extend(quote! {
         #end
     });
 
-    gen
+    tokens
 }
